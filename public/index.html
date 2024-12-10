@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>联系方式爬虫工具</title>
+    <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            background: #f5f5f5;
+            padding: 20px;
+            border-radius: 8px;
+        }
+        textarea {
+            width: 100%;
+            height: 100px;
+            margin: 10px 0;
+            padding: 10px;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        .results {
+            margin-top: 20px;
+        }
+        .result-item {
+            background: white;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .import-section {
+            margin: 20px 0;
+            padding: 15px;
+            background: white;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .file-input-wrapper {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin: 10px 0;
+        }
+        .import-btn {
+            background: #2196F3;
+            color: white;
+        }
+        .import-btn:hover {
+            background: #1976D2;
+        }
+        small {
+            color: #666;
+            display: block;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>联系方式爬虫工具</h1>
+        
+        <div class="import-section">
+            <h3>批量导入网址</h3>
+            <div class="file-input-wrapper">
+                <input type="file" id="fileInput" accept=".xlsx,.xls,.csv,.txt">
+                <button onclick="importFromFile()" class="import-btn">导入文件</button>
+            </div>
+            <small>支持 Excel(.xlsx/.xls)、CSV、TXT 格式文件，Excel文件请将网址放在"Website 
+Address"列</small>
+        </div>
+
+        <div>
+            <p>请输入要爬取的网址（每行一个）：</p>
+            <textarea id="urlInput" 
+placeholder="https://example.com&#10;https://example.org"></textarea>
+            <button onclick="startScraping()">开始爬取</button>
+        </div>
+        <div class="results" id="results"></div>
+    </div>
+
+    <script>
+        let originalExcelData = null; // 保存原始Excel数据
+
+        async function importFromFile() {
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            if (!file) {
+                alert('请选择文件');
+                return;
+            }
+
+            if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
+                const reader = new FileReader();
+                reader.onload = async function(e) {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    
+                    // 获取第一个工作表
+                    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+                    
+                    // 转换为JSON
+                    const jsonData = XLSX.utils.sheet_to_json(worksheet);
+                    
+                    // 保存原始数据
+                    originalExcelData = jsonData;
+                    
+                    // 提取网址列（假设列名为 'website' 或 'Website Address'）
+                    const urls = jsonData
+                        .map(row => row['Website Address'] || row['website'] || row['Website'] || 
+row['URL'])
+                        .filter(url => url); // 过滤空值
+
+                    if (urls.length === 0) {
+                        alert('在Excel文件中未找到有效的网址列');
+                        return;
+                    }
+
+                    // 更新文本框
+                    document.getElementById('urlInput').value = urls.join('\n');
+                    alert(`成功导入 ${urls.length} 个网址`);
+                };
+                reader.readAsArrayBuffer(file);
+            } else {
+                // 处理 CSV/TXT 文件
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const content = e.target.result;
+                    let urls;
+                    if (file.name.endsWith('.csv')) {
+                        urls = content.split(',').map(url => url.trim());
+                    } else {
+                        urls = content.split(/[\n,]/).map(url => url.trim());
+                    }
+                    
+                    // 过滤空行和无效URL
+                    urls = urls.filter(url => {
+                        try {
+                            new URL(url);
+                            return true;
+                        } catch {
+                            return false;
+                        }
+                    });
+
+                    if (urls.length === 0) {
+                        alert('未找到有效的URL');
+                        return;
+                    }
+
+                    // 更新文本框内容
+                    document.getElementById('urlInput').value = urls.join('\n');
+                    alert(`成功导入 ${urls.length} 个网址`);
+                };
+                reader.readAsText(file);
+            }
+        }
+
+        async function startScraping() {
+            const urlsText = document.getElementById('urlInput').value;
+            const urls = urlsText.split('\n').filter(url => url.trim());
+            
+            if (urls.length === 0) {
+                alert('请输入至少一个网址');
+                return;
+            }
+
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '<p>正在爬取中...</p>';
+
+            try {
+                const response = await fetch('http://localhost:3000/api/scrape', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ urls })
+                });
+
+                const data = await response.json();
+                
+                // 如果有Excel数据，创建新的Excel文件
+                if (originalExcelData) {
+                    const updatedData = originalExcelData.map(row => {
+                        const url = row['Website Address'] || row['website'] || row['Website'] || 
+row['URL'];
+                        const scrapedResult = data.find(r => r.url === url);
+                        
+                        if (scrapedResult) {
+                            return {
+                                ...row,
+                                'Emails': scrapedResult.emails.join(', '),
+                                'Phones': scrapedResult.phones.join(', '),
+                                'Facebook': scrapedResult.socialMedia.facebook,
+                                'LinkedIn': scrapedResult.socialMedia.linkedin,
+                                'Twitter': scrapedResult.socialMedia.twitter
+                            };
+                        }
+                        return row;
+                    });
+
+                    // 创建新的工作簿
+                    const newWorkbook = XLSX.utils.book_new();
+                    const newWorksheet = XLSX.utils.json_to_sheet(updatedData);
+                    XLSX.utils.book_append_sheet(newWorkbook, newWorksheet, 'Results');
+
+                    // 导出Excel文件
+                    XLSX.writeFile(newWorkbook, 'scraping_results.xlsx');
+                }
+
+                // 显示结果到页面
+                resultsDiv.innerHTML = '<h2>爬取结果：</h2>';
+                data.forEach(result => {
+                    const resultHtml = `
+                        <div class="result-item">
+                            <h3>网址：${result.url}</h3>
+                            <p>邮箱：${result.emails.join(', ') || '无'}</p>
+                            <p>电话：${result.phones.join(', ') || '无'}</p>
+                            <p>社交媒体：</p>
+                            <ul>
+                                ${result.socialMedia.facebook ? `<li>Facebook: 
+${result.socialMedia.facebook}</li>` : ''}
+                                ${result.socialMedia.linkedin ? `<li>LinkedIn: 
+${result.socialMedia.linkedin}</li>` : ''}
+                                ${result.socialMedia.twitter ? `<li>Twitter: 
+${result.socialMedia.twitter}</li>` : ''}
+                            </ul>
+                        </div>
+                    `;
+                    resultsDiv.innerHTML += resultHtml;
+                });
+
+            } catch (error) {
+                resultsDiv.innerHTML = '<p style="color: red;">爬取过程中出错，请稍后重试</p>';
+                console.error('Error:', error);
+            }
+        }
+    </script>
+</body>
+</html>
